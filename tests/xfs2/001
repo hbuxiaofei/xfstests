@@ -1,0 +1,101 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2014 SGI.  All Rights Reserved.
+#
+# FS QA Test No. 001
+#
+# Test the xfs_db write of the XFS BMBT entries. For each XFS BMBT field,
+# write the value 0, each bit and finally the entry beyond the maximum legal
+# value. Also makes sure a core write and hex input still work.
+#
+. ./common/preamble
+_begin_fstest db auto quick
+
+_do_bit_test()
+{
+	field="$1"
+	bits="$2"
+
+	echo "testing $field with $bits bits"
+	_scratch_xfs_db -x -c "inode $FILE_INO" -c "write $field 0"
+	num=1
+	for n in `seq 0 1 $bits`; do
+		_scratch_xfs_db -x -c "inode $FILE_INO" \
+			  -c "write $field $num"
+		let num=$num*2
+	done
+	echo
+}
+
+# Import common functions.
+. ./common/filter
+
+
+# Modify as appropriate.
+_require_scratch_nocheck
+
+_scratch_mkfs >/dev/null 2>&1
+_scratch_mount
+
+# create the test file
+echo "make a file with data so it has an extent" > $SCRATCH_MNT/file
+
+# find the inode for the test file
+FILE_INO=`ls -i $SCRATCH_MNT |awk '{print $1}'`
+
+_scratch_unmount
+
+# test bit length constants
+BMBT_EXNTFLAG_BITLEN=1
+BMBT_STARTOFF_BITLEN=54
+BMBT_STARTBLOCK_BITLEN=52
+BMBT_BLOCKCOUNT_BITLEN=21
+
+prefix=$(_scratch_get_bmx_prefix $FILE_INO)
+test -n "$prefix" || _fail "could not find bmx prefix from inode $FILE_INO"
+
+filter_output() {
+	sed -e "s/${prefix}/u.bmx/g"
+}
+
+# test setting the BMBT entries from 0 to past the valid number.
+#
+# /*
+#  * Incore version of above.
+#  */
+# typedef struct xfs_bmbt_irec
+# {
+# 	xfs_fileoff_t	br_startoff;	/* starting file offset */
+# 	xfs_fsblock_t	br_startblock;	/* starting block number */
+# 	xfs_filblks_t	br_blockcount;	/* number of blocks */
+# 	xfs_exntst_t	br_state;	/* extent state */
+# } xfs_bmbt_irec_t;
+#
+# 字段	        变量名	        含义
+# startoff	    br_startoff	    文件的逻辑起始块号（文件内的偏移，单位是文件系统块，如 4KB）
+# startblock	br_startblock	磁盘上的物理起始块号（实际数据存储的位置）
+# blockcount	br_blockcount	连续的块数量（这个 extent 占用了多少块）
+# extentflag	br_state    	Extent 的状态标志（0 表示已写入，1 表示预分配但未写入）
+_do_bit_test "${prefix}[0].extentflag" $BMBT_EXNTFLAG_BITLEN | filter_output
+_do_bit_test "${prefix}[0].startoff" $BMBT_STARTOFF_BITLEN | filter_output
+_do_bit_test "${prefix}[0].startblock" $BMBT_STARTBLOCK_BITLEN | filter_output
+_do_bit_test "${prefix}[0].blockcount" $BMBT_BLOCKCOUNT_BITLEN | filter_output
+
+# test setting the 32 bit generation number
+# typedef struct xfs_dinode {
+#	__be32		di_gen;		/* generation number */
+# }
+#
+# 生成号/世代号。它的主要作用是：
+#   1. 防止陈旧引用（Stale Reference Protection）
+#   2. 文件系统一致性维护
+# core.gen 是 XFS 用于安全回收 inode 的重要机制，确保系统能可靠地检测到已被重新
+# 分配的 inode，避免数据损坏或安全漏洞
+#
+_scratch_xfs_db -x -c "inode $FILE_INO" -c "write core.gen 0x5a"
+_scratch_xfs_db -x -c "inode $FILE_INO" -c "write core.gen 0xa5"
+_scratch_xfs_db -x -c "inode $FILE_INO" -c "write core.gen 0"
+_scratch_xfs_db -x -c "inode $FILE_INO" -c "write core.gen #5a5a"
+_scratch_xfs_db -x -c "inode $FILE_INO" -c "write core.gen #a5a5"
+status=0
+exit
