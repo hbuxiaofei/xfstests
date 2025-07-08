@@ -1,0 +1,69 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2000-2001 Silicon Graphics, Inc.  All Rights Reserved.
+#
+# FS QA Test No. 003
+#
+# exercise xfs_db bug #784078
+#
+. ./common/preamble
+_begin_fstest db auto quick
+
+# Import common functions.
+. ./common/filter
+
+status=0	# success is the default!
+
+_require_test
+
+[ -f core ] && rm -f core
+[ -f core ] && echo "Warning: can't nuke existing core file!"
+
+test_done()
+{
+        sts=$?
+        [ -f core ] && echo "FAILED - core file"
+        [ ! -f core -a $sts != 0 ] && echo "FAILED - non-zero exit status"
+        rm -f core
+}
+
+# push [对象]  # 保存指定对象（若省略参数则保存当前对象）
+# pop          # 弹出栈顶对象（后进先出）
+#   push/pop 实现类似编程中的"保存现场/恢复现场", 最大堆栈深度通常为10 层（工具限制）
+#
+# type          # 显示当前对象类型
+# type <对象>   # 切换到指定类型的对象
+echo "=== TEST 1 ==="
+_test_xfs_db -r -c 'pop' -c 'type sb'
+test_done
+
+echo "=== TEST 2 ==="
+_test_xfs_db -r -c 'push sb'
+test_done
+
+echo "=== TEST 3 ==="
+_test_xfs_db -r -c 'pop' -c 'push sb'
+test_done
+
+echo "=== TEST 4 ==="
+_test_xfs_db -r -c 'type sb' -c 'print'
+test_done
+
+echo "=== TEST 5 ==="
+_test_xfs_db -r -c 'inode 128' -c 'push' -c 'type' >$tmp.out 2>&1
+test_done
+if ! grep -q "current type is \"inode\"" $tmp.out; then
+    cat $tmp.out
+fi
+
+# sb    # 选择超级块作为当前对象
+# a     # 执行 addr（或 a）命令，显示当前对象的地址信息
+echo "=== TEST 6 ==="
+_test_xfs_db -r -c 'sb' -c 'a' >$tmp.out 2>&1 # don't care about output
+test_done
+
+# ring          # 显示堆栈列表及当前对象, 类似于显示一个"位置环"或"导航环"
+# ring <序号>   # 切换到ring 中对应的对象
+echo "=== TEST 7 ==="
+_test_xfs_db -r -c 'ring'
+test_done
